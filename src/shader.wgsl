@@ -36,9 +36,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let alpha = color.r;
 
     // Discard fragments with alpha close to 0 to avoid rendering them
-    if (alpha < 0.01) {
-        discard;
-    }
+    // if (alpha < 0.01) {
+    //     discard;
+    // }
 
     // Output the color with the correct alpha channel
     return vec4<f32>(1.0, 1.0, 1.0, alpha); // Red color with dynamic alpha
