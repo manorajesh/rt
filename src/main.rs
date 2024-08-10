@@ -8,8 +8,9 @@ use pollster::FutureExt;
 use wgpu::{ Adapter, Device, Instance, PresentMode, Queue, Surface, SurfaceCapabilities };
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ ElementState, KeyEvent, WindowEvent };
 use winit::event_loop::{ ActiveEventLoop, EventLoop };
+use winit::keyboard::Key;
 use winit::window::{ Window, WindowId };
 use wgpu::util::DeviceExt;
 
@@ -59,6 +60,19 @@ impl<'a> ApplicationHandler for StateApplication<'a> {
                 WindowEvent::RedrawRequested => {
                     self.state.as_mut().unwrap().render().unwrap();
                 }
+                WindowEvent::KeyboardInput {
+                    event: KeyEvent { logical_key: key, state: ElementState::Pressed, .. },
+                    ..
+                } =>
+                    match key.as_ref() {
+                        Key::Character("w") => {
+                            self.state.as_mut().unwrap().font_size += 1;
+                        }
+                        Key::Character("s") => {
+                            self.state.as_mut().unwrap().font_size -= 1;
+                        }
+                        _ => (),
+                    }
                 _ => {}
             }
         }
@@ -110,10 +124,10 @@ struct State<'a> {
     queue: Queue,
     config: wgpu::SurfaceConfiguration,
     render_pipeline: wgpu::RenderPipeline,
-    font: fontdue::Font,
     sampler: wgpu::Sampler,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     atlas: InnerAtlas,
+    font_size: u32,
 
     size: PhysicalSize<u32>,
     window: Arc<Window>,
@@ -228,21 +242,14 @@ impl<'a> State<'a> {
             })
         );
 
-        let font = fontdue::Font
-            ::from_bytes(
-                include_bytes!("../Inter-Bold.ttf") as &[u8],
-                fontdue::FontSettings::default()
-            )
-            .unwrap();
-
         let sampler = device.create_sampler(
             &(wgpu::SamplerDescriptor {
                 address_mode_u: wgpu::AddressMode::ClampToEdge,
                 address_mode_v: wgpu::AddressMode::ClampToEdge,
                 address_mode_w: wgpu::AddressMode::ClampToEdge,
                 mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Nearest,
-                mipmap_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             })
         );
@@ -257,10 +264,10 @@ impl<'a> State<'a> {
             size,
             window: window_arc,
             render_pipeline,
-            font,
             sampler,
             texture_bind_group_layout,
             atlas,
+            font_size: 120,
         }
     }
 
@@ -352,10 +359,10 @@ impl<'a> State<'a> {
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.1,
-                                    g: 0.2,
-                                    b: 0.3,
-                                    a: 1.0,
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 0.8,
                                 }),
                                 store: wgpu::StoreOp::Store,
                             },
@@ -368,7 +375,7 @@ impl<'a> State<'a> {
             );
 
             let glyph_details = self.atlas
-                .get_or_create_glyph('a', 50, &self.font, &self.queue)
+                .get_or_create_glyph('a', self.font_size, &self.queue, &self.device)
                 .unwrap();
 
             // Calculate texture coordinates based on atlas
@@ -494,50 +501,6 @@ impl<'a> State<'a> {
         output.present();
 
         Ok(())
-    }
-
-    pub fn get_glyph(&self, character: char, font_size: f32) -> Option<Glyph> {
-        let (metrics, bitmap) = self.font.rasterize(character, font_size);
-
-        let size = wgpu::Extent3d {
-            width: metrics.width as u32,
-            height: metrics.height as u32,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = self.device.create_texture(
-            &(wgpu::TextureDescriptor {
-                label: Some("Glyph Texture"),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[wgpu::TextureFormat::R8Unorm],
-            })
-        );
-
-        self.queue.write_texture(
-            wgpu::ImageCopyTexture {
-                aspect: wgpu::TextureAspect::All,
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            &bitmap,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(metrics.width as u32),
-                rows_per_image: Some(metrics.height as u32),
-            },
-            size
-        );
-
-        Some(Glyph {
-            texture,
-            size,
-        })
     }
 
     pub fn window(&self) -> &Window {

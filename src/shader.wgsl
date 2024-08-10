@@ -32,14 +32,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample the texture to get the red channel value
     let color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
 
-    // Treat the red channel as the alpha value
-    let alpha = color.r;
-
-    // Discard fragments with alpha close to 0 to avoid rendering them
-    // if (alpha < 0.01) {
-    //     discard;
-    // }
-
-    // Output the color with the correct alpha channel
-    return vec4<f32>(1.0, 1.0, 1.0, alpha); // Red color with dynamic alpha
+    // Directly use the sampled color's alpha
+    return vec4<f32>(1.0, 1.0, 1.0, color.r);
 }
