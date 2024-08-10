@@ -1,8 +1,9 @@
-mod texture;
+mod atlas;
 
 use std::iter;
 use std::sync::Arc;
 
+use atlas::InnerAtlas;
 use pollster::FutureExt;
 use wgpu::{ Adapter, Device, Instance, PresentMode, Queue, Surface, SurfaceCapabilities };
 use winit::application::ApplicationHandler;
@@ -112,6 +113,7 @@ struct State<'a> {
     font: fontdue::Font,
     sampler: wgpu::Sampler,
     texture_bind_group_layout: wgpu::BindGroupLayout,
+    atlas: InnerAtlas,
 
     size: PhysicalSize<u32>,
     window: Arc<Window>,
@@ -245,6 +247,8 @@ impl<'a> State<'a> {
             })
         );
 
+        let atlas = InnerAtlas::new(&device);
+
         Self {
             surface,
             device,
@@ -256,6 +260,7 @@ impl<'a> State<'a> {
             font,
             sampler,
             texture_bind_group_layout,
+            atlas,
         }
     }
 
@@ -362,50 +367,74 @@ impl<'a> State<'a> {
                 })
             );
 
-            let glyph = self.get_glyph('t', 500.0).unwrap();
-            let view = glyph.texture.create_view(&wgpu::TextureViewDescriptor::default());
-            // quad for glyph
-            // A___D
-            // |  /|
-            // | / |
-            // |/__|
-            // B   C
-            let screen_width = self.config.width as f32;
-            let screen_height = self.config.height as f32;
+            let glyph_details = self.atlas
+                .get_or_create_glyph('a', 50, &self.font, &self.queue)
+                .unwrap();
 
-            let glyph_width = ((glyph.size.width as f32) / screen_width) * 2.0;
-            let glyph_height = ((glyph.size.height as f32) / screen_height) * 2.0;
+            // Calculate texture coordinates based on atlas
+            let tex_coords_top_left = [
+                (glyph_details.x as f32) / (self.atlas.size as f32),
+                (glyph_details.y as f32) / (self.atlas.size as f32),
+            ];
+            let tex_coords_bottom_right = [
+                ((glyph_details.x + glyph_details.width) as f32) / (self.atlas.size as f32),
+                ((glyph_details.y + glyph_details.height) as f32) / (self.atlas.size as f32),
+            ];
 
-            // Assuming you want to center the glyph at (0, 0)
-            let top_left = [-glyph_width / 2.0, glyph_height / 2.0, 0.0];
-            let bottom_left = [-glyph_width / 2.0, -glyph_height / 2.0, 0.0];
-            let bottom_right = [glyph_width / 2.0, -glyph_height / 2.0, 0.0];
-            let top_right = [glyph_width / 2.0, glyph_height / 2.0, 0.0];
+            // Assume a screen size for normalization
+            let screen_width: f32 = self.size.width as f32;
+            let screen_height: f32 = self.size.height as f32;
 
+            // Calculate the normalized positions for screen space (if using a normalized coordinate system)
+            // Let's assume you're placing the glyph in the center of the screen
+            let glyph_center_x: f32 = 0.0; // Centered horizontally
+            let glyph_center_y: f32 = 0.0; // Centered vertically
+
+            // Calculate normalized width and height
+            let half_width = (glyph_details.width as f32) / screen_width;
+            let half_height = (glyph_details.height as f32) / screen_height;
+
+            // Position the glyph at the desired screen location
             let vertex_buffer = self.device.create_buffer_init(
                 &(wgpu::util::BufferInitDescriptor {
                     label: Some("Vertex Buffer"),
                     contents: bytemuck::cast_slice(
                         &[
-                            // A: Top-left
+                            // Top-left
                             Vertex {
-                                position: top_left,
-                                tex_coords: [0.0, 0.0],
+                                position: [
+                                    glyph_center_x - half_width,
+                                    glyph_center_y + half_height,
+                                    0.0,
+                                ],
+                                tex_coords: tex_coords_top_left,
                             },
-                            // B: Bottom-left
+                            // Bottom-left
                             Vertex {
-                                position: bottom_left,
-                                tex_coords: [0.0, 1.0],
+                                position: [
+                                    glyph_center_x - half_width,
+                                    glyph_center_y - half_height,
+                                    0.0,
+                                ],
+                                tex_coords: [tex_coords_top_left[0], tex_coords_bottom_right[1]],
                             },
-                            // C: Bottom-right
+                            // Bottom-right
                             Vertex {
-                                position: bottom_right,
-                                tex_coords: [1.0, 1.0],
+                                position: [
+                                    glyph_center_x + half_width,
+                                    glyph_center_y - half_height,
+                                    0.0,
+                                ],
+                                tex_coords: tex_coords_bottom_right,
                             },
-                            // D: Top-right
+                            // Top-right
                             Vertex {
-                                position: top_right,
-                                tex_coords: [1.0, 0.0],
+                                position: [
+                                    glyph_center_x + half_width,
+                                    glyph_center_y + half_height,
+                                    0.0,
+                                ],
+                                tex_coords: [tex_coords_bottom_right[0], tex_coords_top_left[1]],
                             },
                         ]
                     ),
@@ -413,6 +442,11 @@ impl<'a> State<'a> {
                 })
             );
 
+            // quad
+            // 0----3
+            // | \  |
+            // |  \ |
+            // 1----2
             let index_buffer = self.device.create_buffer_init(
                 &(wgpu::util::BufferInitDescriptor {
                     label: Some("Index Buffer"),
@@ -420,10 +454,10 @@ impl<'a> State<'a> {
                         &[
                             0u16,
                             1,
-                            2, // First triangle ABC
+                            2, // First triangle
                             0,
                             2,
-                            3, // Second triangle ACD
+                            3, // Second triangle
                         ]
                     ),
                     usage: wgpu::BufferUsages::INDEX,
@@ -438,7 +472,7 @@ impl<'a> State<'a> {
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
+                            resource: wgpu::BindingResource::TextureView(&self.atlas.texture_view),
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,

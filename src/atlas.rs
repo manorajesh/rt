@@ -22,7 +22,7 @@ use lru::LruCache;
 
 pub struct InnerAtlas {
     pub texture: Texture,
-    texture_view: TextureView,
+    pub texture_view: TextureView,
     packer: BucketedAtlasAllocator,
     pub size: u32,
     glyph_cache: LruCache<CacheKey, GlyphDetails>,
