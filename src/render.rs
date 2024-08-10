@@ -338,20 +338,19 @@ impl<'a> State<'a> {
         let screen_height: f32 = self.size.height as f32;
 
         // Calculate the size of each grid cell
-        let cell_width =
-            screen_width / (self.user_config.num_cols as f32) / (self.user_config.font_size as f32); // self.columns should be the number of columns in the grid
-        let cell_height =
-            screen_height /
-            (self.user_config.num_rows as f32) /
-            (self.user_config.font_size as f32); // self.rows should be the number of rows in the grid
+        let cell_width = screen_width / (self.user_config.font_size as f32);
+        let cell_height = screen_height / (self.user_config.font_size as f32);
+        let cell_width = normalize_position(cell_width, screen_width);
+        let cell_height = normalize_position(cell_height, screen_height);
 
         // Calculate the position of the character in screen space
-        let x_position = (col as f32) * cell_width;
-        let y_position = (row as f32) * cell_height;
+        let x_position = (col as f32) * cell_width - 1.0;
+        let y_position = (row as f32) * cell_height - 1.0;
+        error!("x_position: {}, cell_height: {}", x_position, cell_height);
 
         // Calculate the normalized width and height of the glyph
-        let glyph_width = ((glyph_details.width as f32) / screen_width) * cell_width;
-        let glyph_height = ((glyph_details.height as f32) / screen_height) * cell_height;
+        let glyph_width = (glyph_details.width as f32) / screen_width;
+        let glyph_height = (glyph_details.height as f32) / screen_height;
 
         // Calculate vertex positions based on row and column
         let vertex_buffer = self.device.create_buffer_init(
@@ -359,40 +358,24 @@ impl<'a> State<'a> {
                 label: Some("Vertex Buffer"),
                 contents: bytemuck::cast_slice(
                     &[
-                        // Top-left
-                        Vertex {
-                            position: [
-                                x_position - glyph_width / 2.0,
-                                y_position + glyph_height / 2.0,
-                                0.0,
-                            ],
-                            tex_coords: tex_coords_top_left,
-                        },
                         // Bottom-left
                         Vertex {
-                            position: [
-                                x_position - glyph_width / 2.0,
-                                y_position - glyph_height / 2.0,
-                                0.0,
-                            ],
-                            tex_coords: [tex_coords_top_left[0], tex_coords_bottom_right[1]],
+                            position: [x_position, y_position + glyph_height, 0.0],
+                            tex_coords: tex_coords_top_left,
                         },
-                        // Bottom-right
+                        // Top-left
                         Vertex {
-                            position: [
-                                x_position + glyph_width / 2.0,
-                                y_position - glyph_height / 2.0,
-                                0.0,
-                            ],
-                            tex_coords: tex_coords_bottom_right,
+                            position: [x_position, y_position, 0.0],
+                            tex_coords: [tex_coords_top_left[0], tex_coords_bottom_right[1]],
                         },
                         // Top-right
                         Vertex {
-                            position: [
-                                x_position + glyph_width / 2.0,
-                                y_position + glyph_height / 2.0,
-                                0.0,
-                            ],
+                            position: [x_position + glyph_width, y_position, 0.0],
+                            tex_coords: tex_coords_bottom_right,
+                        },
+                        // Bottom-right
+                        Vertex {
+                            position: [x_position + glyph_width, y_position + glyph_height, 0.0],
                             tex_coords: [tex_coords_bottom_right[0], tex_coords_top_left[1]],
                         },
                     ]
@@ -452,4 +435,8 @@ impl<'a> State<'a> {
     pub fn window(&self) -> &Window {
         &self.window
     }
+}
+
+fn normalize_position(position: f32, screen_size: f32) -> f32 {
+    (position / screen_size) * 2.0
 }
