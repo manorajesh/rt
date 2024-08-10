@@ -1,38 +1,72 @@
-use std::collections::HashMap;
+mod texture;
+
+use std::iter;
 use std::sync::Arc;
 
-use fontdue::Font;
-use log::{ error, info };
 use pollster::FutureExt;
-use wgpu::{
-    Adapter,
-    Device,
-    Extent3d,
-    Instance,
-    PresentMode,
-    Queue,
-    StoreOp,
-    Surface,
-    SurfaceCapabilities,
-    Texture,
-    TextureDescriptor,
-    TextureDimension,
-    TextureFormat,
-    TextureUsages,
-    TextureViewDescriptor,
-};
-use wgpu::util::DeviceExt;
+use wgpu::{ Adapter, Device, Instance, PresentMode, Queue, Surface, SurfaceCapabilities };
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ ElementState, KeyEvent, WindowEvent };
+use winit::event::WindowEvent;
 use winit::event_loop::{ ActiveEventLoop, EventLoop };
-use winit::keyboard::Key;
 use winit::window::{ Window, WindowId };
+use wgpu::util::DeviceExt;
 
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct TextColor {
-    color: [f32; 4], // RGBA color
+pub async fn run() {
+    let event_loop = EventLoop::new().unwrap();
+
+    let mut window_state = StateApplication::new();
+    let _ = event_loop.run_app(&mut window_state);
+}
+
+struct StateApplication<'a> {
+    state: Option<State<'a>>,
+}
+
+impl<'a> StateApplication<'a> {
+    pub fn new() -> Self {
+        Self {
+            state: None,
+        }
+    }
+}
+
+impl<'a> ApplicationHandler for StateApplication<'a> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let window = event_loop
+            .create_window(Window::default_attributes().with_title("Hello!"))
+            .unwrap();
+        self.state = Some(State::new(window));
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent
+    ) {
+        let window = self.state.as_ref().unwrap().window();
+
+        if window.id() == window_id {
+            match event {
+                WindowEvent::CloseRequested => {
+                    event_loop.exit();
+                }
+                WindowEvent::Resized(physical_size) => {
+                    self.state.as_mut().unwrap().resize(physical_size);
+                }
+                WindowEvent::RedrawRequested => {
+                    self.state.as_mut().unwrap().render().unwrap();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        let window = self.state.as_ref().unwrap().window();
+        window.request_redraw();
+    }
 }
 
 #[repr(C)]
@@ -64,79 +98,34 @@ impl Vertex {
     }
 }
 
-pub async fn run() {
-    let event_loop = EventLoop::new().unwrap();
+// const VERTICES: &[Vertex] = &[
+//     Vertex {
+//         position: [-0.0868241, 0.49240386, 0.0],
+//         tex_coords: [0.4131759, 0.00759614],
+//     }, // A
+//     Vertex {
+//         position: [-0.49513406, 0.06958647, 0.0],
+//         tex_coords: [0.0048659444, 0.43041354],
+//     }, // B
+//     Vertex {
+//         position: [-0.21918549, -0.44939706, 0.0],
+//         tex_coords: [0.28081453, 0.949397],
+//     }, // C
+//     Vertex {
+//         position: [0.35966998, -0.3473291, 0.0],
+//         tex_coords: [0.85967, 0.84732914],
+//     }, // D
+//     Vertex {
+//         position: [0.44147372, 0.2347359, 0.0],
+//         tex_coords: [0.9414737, 0.2652641],
+//     }, // E
+// ];
 
-    let mut window_state = StateApplication::new();
-    let _ = event_loop.run_app(&mut window_state);
-}
-
-struct StateApplication<'a> {
-    state: Option<State<'a>>,
-}
-
-impl<'a> StateApplication<'a> {
-    pub fn new() -> Self {
-        Self { state: None }
-    }
-}
-
-impl<'a> ApplicationHandler for StateApplication<'a> {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window = event_loop
-            .create_window(
-                Window::default_attributes()
-                    .with_title("rt")
-                    .with_min_inner_size(winit::dpi::PhysicalSize::new(100, 100))
-            )
-            .unwrap();
-        self.state = Some(State::new(window));
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: WindowEvent
-    ) {
-        let window = self.state.as_ref().unwrap().window();
-
-        if window.id() == window_id {
-            match event {
-                WindowEvent::CloseRequested => {
-                    event_loop.exit();
-                }
-                WindowEvent::KeyboardInput {
-                    event: KeyEvent { logical_key: key, state: ElementState::Pressed, .. },
-                    ..
-                } =>
-                    match key.as_ref() {
-                        Key::Character(key) => {
-                            error!("Key pressed: {}", key);
-                        }
-                        _ => (),
-                    }
-                WindowEvent::Resized(physical_size) => {
-                    self.state.as_mut().unwrap().resize(physical_size);
-                }
-                WindowEvent::RedrawRequested => {
-                    self.state.as_mut().unwrap().render().unwrap();
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        let window = self.state.as_ref().unwrap().window();
-        window.request_redraw();
-    }
-}
+// const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, /* padding */ 0];
 
 struct Glyph {
-    texture: Texture,
-    width: u32,
-    height: u32,
+    pub texture: wgpu::Texture,
+    pub size: wgpu::Extent3d,
 }
 
 struct State<'a> {
@@ -144,16 +133,13 @@ struct State<'a> {
     device: Device,
     queue: Queue,
     config: wgpu::SurfaceConfiguration,
+    render_pipeline: wgpu::RenderPipeline,
+    font: fontdue::Font,
+    sampler: wgpu::Sampler,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+
     size: PhysicalSize<u32>,
     window: Arc<Window>,
-    font: Font,
-    glyph_cache: HashMap<char, Glyph>,
-    render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
-    texture_bind_group_layout: wgpu::BindGroupLayout,
-    uniform_buffer: wgpu::Buffer,
 }
 
 impl<'a> State<'a> {
@@ -168,28 +154,16 @@ impl<'a> State<'a> {
         let config = Self::create_surface_config(size, surface_caps);
         surface.configure(&device, &config);
 
-        // Load the font data
-        let font = include_bytes!("../Inter-Bold.ttf") as &[u8];
-        let font = Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
-
-        // Create shaders
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
-
-        // Setup the pipeline
         let texture_bind_group_layout = device.create_bind_group_layout(
             &(wgpu::BindGroupLayoutDescriptor {
-                label: Some("Texture Bind Group Layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
                             multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         },
                         count: None,
                     },
@@ -199,19 +173,15 @@ impl<'a> State<'a> {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
                 ],
+                label: Some("texture_bind_group_layout"),
             })
         );
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
 
         let render_pipeline_layout = device.create_pipeline_layout(
             &(wgpu::PipelineLayoutDescriptor {
@@ -227,49 +197,37 @@ impl<'a> State<'a> {
                 layout: Some(&render_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: "main_vertex",
-                    buffers: &[
-                        wgpu::VertexBufferLayout {
-                            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &[
-                                wgpu::VertexAttribute {
-                                    offset: 0,
-                                    shader_location: 0,
-                                    format: wgpu::VertexFormat::Float32x2,
-                                },
-                                wgpu::VertexAttribute {
-                                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                                    shader_location: 1,
-                                    format: wgpu::VertexFormat::Float32x2,
-                                },
-                            ],
-                        },
-                    ],
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        ..Default::default()
-                    },
+                    entry_point: "vs_main",
+                    buffers: &[Vertex::desc()],
+                    compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: "main_fragment",
+                    entry_point: "fs_main",
                     targets: &[
                         Some(wgpu::ColorTargetState {
                             format: config.format,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent::REPLACE,
+                                alpha: wgpu::BlendComponent::REPLACE,
+                            }),
                             write_mask: wgpu::ColorWrites::ALL,
                         }),
                     ],
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        ..Default::default()
-                    },
+                    compilation_options: Default::default(),
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
                     cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
+                    // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
+                    // or Features::POLYGON_MODE_POINT
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    // Requires Features::DEPTH_CLIP_CONTROL
+                    unclipped_depth: false,
+                    // Requires Features::CONSERVATIVE_RASTERIZATION
+                    conservative: false,
                 },
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState {
@@ -277,45 +235,46 @@ impl<'a> State<'a> {
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
+                // If the pipeline will be used with a multiview render pass, this
+                // indicates how many array layers the attachments will have.
                 multiview: None,
+                // Useful for optimizing shader compilation on Android
                 cache: None,
             })
         );
 
-        let vertex_data = [
-            Vertex { position: [-0.5, -0.5, 0.0], tex_coords: [0.0, 1.0] }, // Bottom left
-            Vertex { position: [0.5, -0.5, 0.0], tex_coords: [1.0, 1.0] }, // Bottom right
-            Vertex { position: [0.5, 0.5, 0.0], tex_coords: [1.0, 0.0] }, // Top right
-            Vertex { position: [-0.5, 0.5, 0.0], tex_coords: [0.0, 0.0] }, // Top left
-        ];
+        // let vertex_buffer = device.create_buffer_init(
+        //     &(wgpu::util::BufferInitDescriptor {
+        //         label: Some("Vertex Buffer"),
+        //         contents: bytemuck::cast_slice(VERTICES),
+        //         usage: wgpu::BufferUsages::VERTEX,
+        //     })
+        // );
+        // let index_buffer = device.create_buffer_init(
+        //     &(wgpu::util::BufferInitDescriptor {
+        //         label: Some("Index Buffer"),
+        //         contents: bytemuck::cast_slice(INDICES),
+        //         usage: wgpu::BufferUsages::INDEX,
+        //     })
+        // );
+        // let num_indices = INDICES.len() as u32;
 
-        let index_data: &[u16] = &[0, 1, 2, 2, 3, 0];
+        let font = fontdue::Font
+            ::from_bytes(
+                include_bytes!("../Inter-Bold.ttf") as &[u8],
+                fontdue::FontSettings::default()
+            )
+            .unwrap();
 
-        let vertex_buffer = device.create_buffer_init(
-            &(wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&vertex_data),
-                usage: wgpu::BufferUsages::VERTEX,
-            })
-        );
-
-        let index_buffer = device.create_buffer_init(
-            &(wgpu::util::BufferInitDescriptor {
-                label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(index_data),
-                usage: wgpu::BufferUsages::INDEX,
-            })
-        );
-
-        let num_indices = index_data.len() as u32;
-
-        let text_color = TextColor { color: [1.0, 1.0, 1.0, 1.0] }; // Default to white
-
-        let uniform_buffer = device.create_buffer_init(
-            &(wgpu::util::BufferInitDescriptor {
-                label: Some("Text Color Buffer"),
-                contents: bytemuck::cast_slice(&[text_color]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        let sampler = device.create_sampler(
+            &(wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
             })
         );
 
@@ -326,14 +285,10 @@ impl<'a> State<'a> {
             config,
             size,
             window: window_arc,
-            font,
-            glyph_cache: HashMap::new(),
             render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            num_indices,
+            font,
+            sampler,
             texture_bind_group_layout,
-            uniform_buffer,
         }
     }
 
@@ -389,7 +344,7 @@ impl<'a> State<'a> {
 
     fn create_gpu_instance() -> Instance {
         Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN, // TODO: AMD GPUs throw error on DX12
+            backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         })
     }
@@ -405,33 +360,13 @@ impl<'a> State<'a> {
         println!("Resized to {:?} from state!", new_size);
     }
 
-    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture().unwrap();
-        let view = output.texture.create_view(&TextureViewDescriptor::default());
+    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        let output = self.surface.get_current_texture()?;
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = self.device.create_command_encoder(
             &(wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
-            })
-        );
-
-        let render_pipeline = &self.render_pipeline;
-        let vertex_buffer = self.vertex_buffer.slice(..);
-        let index_buffer = self.index_buffer.slice(..);
-        let num_indices = self.num_indices;
-
-        // Precompute bind group layouts, and sampler, as they do not change per-glyph
-        let texture_bind_group_layout = &self.texture_bind_group_layout;
-        let uniform_buffer_binding = self.uniform_buffer.as_entire_binding();
-        let sampler = self.device.create_sampler(
-            &(wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
             })
         );
 
@@ -450,186 +385,165 @@ impl<'a> State<'a> {
                                     b: 0.3,
                                     a: 1.0,
                                 }),
-                                store: StoreOp::Store,
+                                store: wgpu::StoreOp::Store,
                             },
                         }),
                     ],
                     depth_stencil_attachment: None,
-                    ..Default::default()
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
                 })
             );
 
-            // Render "Hello, World!" at position (50, 50)
-            let text = "Hello, World!";
-            let mut glyphs = Vec::new();
-            for c in text.chars() {
-                let glyph = self.get_cached_glyph(c);
-                glyphs.push(glyph);
-            }
-            let mut x_pos = 50.0;
-            for glyph in glyphs {
-                let texture_view = glyph.texture.create_view(&TextureViewDescriptor::default());
+            let glyph = self.get_glyph('t', 500.0).unwrap();
+            let view = glyph.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            // quad for glyph
+            // A___D
+            // |  /|
+            // | / |
+            // |/__|
+            // B   C
+            let screen_width = self.config.width as f32;
+            let screen_height = self.config.height as f32;
 
-                let bind_group = self.device.create_bind_group(
-                    &(wgpu::BindGroupDescriptor {
-                        layout: &texture_bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(&texture_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Sampler(&sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: self.uniform_buffer.as_entire_binding(),
-                            },
-                        ],
-                        label: Some("Glyph Texture Bind Group"),
-                    })
-                );
+            let glyph_width = ((glyph.size.width as f32) / screen_width) * 2.0;
+            let glyph_height = ((glyph.size.height as f32) / screen_height) * 2.0;
 
-                render_pass.set_pipeline(render_pipeline);
-                render_pass.set_vertex_buffer(0, vertex_buffer.clone());
-                render_pass.set_index_buffer(index_buffer.clone(), wgpu::IndexFormat::Uint16);
-                render_pass.set_bind_group(0, &bind_group, &[]);
-                render_pass.draw_indexed(0..num_indices, 0, 0..1);
+            // Assuming you want to center the glyph at (0, 0)
+            let top_left = [-glyph_width / 2.0, glyph_height / 2.0, 0.0];
+            let bottom_left = [-glyph_width / 2.0, -glyph_height / 2.0, 0.0];
+            let bottom_right = [glyph_width / 2.0, -glyph_height / 2.0, 0.0];
+            let top_right = [glyph_width / 2.0, glyph_height / 2.0, 0.0];
 
-                // Update x_pos for the next character
-                x_pos += glyph.width as f32;
-            }
+            let vertex_buffer = self.device.create_buffer_init(
+                &(wgpu::util::BufferInitDescriptor {
+                    label: Some("Vertex Buffer"),
+                    contents: bytemuck::cast_slice(
+                        &[
+                            // A: Top-left
+                            Vertex {
+                                position: top_left,
+                                tex_coords: [0.0, 0.0],
+                            },
+                            // B: Bottom-left
+                            Vertex {
+                                position: bottom_left,
+                                tex_coords: [0.0, 1.0],
+                            },
+                            // C: Bottom-right
+                            Vertex {
+                                position: bottom_right,
+                                tex_coords: [1.0, 1.0],
+                            },
+                            // D: Top-right
+                            Vertex {
+                                position: top_right,
+                                tex_coords: [1.0, 0.0],
+                            },
+                        ]
+                    ),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+            );
+
+            let index_buffer = self.device.create_buffer_init(
+                &(wgpu::util::BufferInitDescriptor {
+                    label: Some("Index Buffer"),
+                    contents: bytemuck::cast_slice(
+                        &[
+                            0u16,
+                            1,
+                            2, // First triangle ABC
+                            0,
+                            2,
+                            3, // Second triangle ACD
+                        ]
+                    ),
+                    usage: wgpu::BufferUsages::INDEX,
+                })
+            );
+
+            let num_indices = 6;
+
+            let diffuse_bind_group = self.device.create_bind_group(
+                &(wgpu::BindGroupDescriptor {
+                    layout: &self.texture_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                    ],
+                    label: Some("diffuse_bind_group"),
+                })
+            );
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &diffuse_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..num_indices, 0, 0..1);
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue.submit(iter::once(encoder.finish()));
         output.present();
 
         Ok(())
     }
 
-    fn get_cached_glyph(&self, character: char) -> Glyph {
-        let (metrics, bitmap) = self.font.rasterize(character, 48.0);
+    pub fn get_glyph(&self, character: char, font_size: f32) -> Option<Glyph> {
+        let (metrics, bitmap) = self.font.rasterize(character, font_size);
 
-        // Check if the glyph has a valid size
-        if metrics.width == 0 || metrics.height == 0 {
-            // Handle this case gracefully
-            // You could return a default or placeholder glyph, or skip rendering this character.
-            return Glyph {
-                texture: self.create_placeholder_texture(),
-                width: 0,
-                height: 0,
-            };
-        }
-
-        let texture = self.create_texture_from_bitmap(
-            &bitmap,
-            metrics.width as u32,
-            metrics.height as u32
-        );
-
-        Glyph {
-            texture,
+        let size = wgpu::Extent3d {
             width: metrics.width as u32,
             height: metrics.height as u32,
-        }
-    }
-
-    fn create_placeholder_texture(&self) -> Texture {
-        // Create a 1x1 transparent texture as a placeholder
-        let texture_extent = Extent3d {
-            width: 1,
-            height: 1,
             depth_or_array_layers: 1,
         };
 
         let texture = self.device.create_texture(
-            &(TextureDescriptor {
-                label: Some("Placeholder Glyph Texture"),
-                size: texture_extent,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format: TextureFormat::R8Unorm,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                view_formats: &[],
-            })
-        );
-
-        let clear_color = [0u8; 4];
-        self.queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &clear_color,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(1),
-                rows_per_image: Some(1),
-            },
-            texture_extent
-        );
-
-        texture
-    }
-
-    fn create_texture_from_bitmap(&self, bitmap: &[u8], width: u32, height: u32) -> Texture {
-        let texture_extent = Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = self.device.create_texture(
-            &(TextureDescriptor {
+            &(wgpu::TextureDescriptor {
                 label: Some("Glyph Texture"),
-                size: texture_extent,
+                size,
                 mip_level_count: 1,
                 sample_count: 1,
-                dimension: TextureDimension::D2,
-                format: TextureFormat::R8Unorm,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                view_formats: &[],
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[wgpu::TextureFormat::R8Unorm],
             })
         );
 
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
+                aspect: wgpu::TextureAspect::All,
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
             },
-            bitmap,
+            &bitmap,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(width),
-                rows_per_image: Some(height),
+                bytes_per_row: Some(metrics.width as u32),
+                rows_per_image: Some(metrics.height as u32),
             },
-            texture_extent
+            size
         );
 
-        texture
+        Some(Glyph {
+            texture,
+            size,
+        })
     }
 
     pub fn window(&self) -> &Window {
         &self.window
     }
-
-    pub fn update_text_color(&self, new_color: [f32; 4]) {
-        self.queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::cast_slice(&[TextColor { color: new_color }])
-        );
-    }
 }
 
 fn main() {
-    env_logger::init(); // Necessary for logging within WGPU
-
     pollster::block_on(run());
 }
