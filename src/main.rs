@@ -1,3 +1,5 @@
+mod text;
+
 use std::sync::Arc;
 use rt::{
     Attrs,
@@ -16,6 +18,7 @@ use rt::{
     TextRenderer,
     Viewport,
 };
+use text::Text;
 use wgpu::{
     CommandEncoderDescriptor,
     CompositeAlphaMode,
@@ -34,11 +37,17 @@ use wgpu::{
     TextureUsages,
     TextureViewDescriptor,
 };
-use winit::{ dpi::LogicalSize, event::WindowEvent, event_loop::EventLoop, window::Window };
+use winit::{
+    dpi::LogicalSize,
+    event::{ ElementState, KeyEvent, WindowEvent },
+    event_loop::EventLoop,
+    keyboard::Key,
+    window::Window,
+};
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
-    event_loop.run_app(&mut (Application { window_state: None })).unwrap();
+    event_loop.run_app(&mut (Application { window_state: None, text: None })).unwrap();
 }
 
 struct WindowState {
@@ -130,6 +139,7 @@ impl WindowState {
 
 struct Application {
     window_state: Option<WindowState>,
+    text: Option<Text>,
 }
 
 impl winit::application::ApplicationHandler for Application {
@@ -146,6 +156,8 @@ impl winit::application::ApplicationHandler for Application {
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
         self.window_state = Some(pollster::block_on(WindowState::new(window)));
+
+        self.text = Some(Text::new(width, height));
     }
 
     fn window_event(
@@ -181,6 +193,12 @@ impl winit::application::ApplicationHandler for Application {
                 window.request_redraw();
             }
             WindowEvent::RedrawRequested => {
+                text_buffer.set_text(
+                    font_system,
+                    &self.text.as_ref().unwrap().as_str(),
+                    Attrs::new().family(Family::SansSerif),
+                    Shaping::Advanced
+                );
                 viewport.update(&queue, Resolution {
                     width: surface_config.width,
                     height: surface_config.height,
@@ -245,6 +263,21 @@ impl winit::application::ApplicationHandler for Application {
 
                 atlas.trim();
             }
+            WindowEvent::KeyboardInput {
+                event: KeyEvent { logical_key: key, state: ElementState::Pressed, .. },
+                ..
+            } =>
+                match key.as_ref() {
+                    Key::Character(character) => {
+                        self.text.as_mut().unwrap().push_str(character);
+                        // self.text
+                        //     .as_mut()
+                        //     .unwrap()
+                        //     .insert_char(0, 0, character.chars().next().unwrap());
+                        window.request_redraw();
+                    }
+                    _ => (),
+                }
             WindowEvent::CloseRequested => event_loop.exit(),
             _ => {}
         }
