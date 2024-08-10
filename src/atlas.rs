@@ -45,6 +45,7 @@ pub struct InnerAtlas {
 
 impl InnerAtlas {
     const INITIAL_SIZE: u32 = 256;
+    const RASTERIZE_SIZE: u32 = 150;
 
     pub fn new(device: &Device) -> Self {
         let size = Self::INITIAL_SIZE;
@@ -92,11 +93,10 @@ impl InnerAtlas {
     pub fn get_or_create_glyph(
         &mut self,
         character: char,
-        font_size: u32,
         queue: &Queue,
         device: &Device
     ) -> Option<GlyphDetails> {
-        let key = CacheKey { character, font_size };
+        let key = CacheKey { character, font_size: Self::RASTERIZE_SIZE };
 
         // Check if the glyph is already in the cache
         if let Some(details) = self.glyph_cache.get(&key) {
@@ -104,10 +104,10 @@ impl InnerAtlas {
         }
 
         // Rasterize the glyph using Fontdue
-        let (metrics, bitmap) = self.font.rasterize(character, font_size as f32);
+        let (metrics, bitmap) = self.font.rasterize(character, Self::RASTERIZE_SIZE as f32);
 
         if metrics.width == 0 || metrics.height == 0 {
-            return None; // Handle empty glyphs (like spaces)
+            return None; // Handle empty glyphs
         }
 
         // Attempt to upload the glyph to the atlas
