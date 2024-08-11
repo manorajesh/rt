@@ -64,11 +64,22 @@ impl Text {
 
     pub fn push(&mut self, c: char) {
         if c == '\n' {
-            self.push_newline();
+            self.buffer.push(Cell {
+                character: '\n',
+                fg_color: Color::Default,
+                bg_color: Color::Default,
+                style: Style::default(),
+            });
         } else {
-            let row = self.viewport.top_row;
-            let col = self.buffer.len() % self.width;
-            self.insert_char(row, col, c);
+            // let row = self.viewport.top_row;
+            // let col = self.buffer.len() % self.width;
+            // self.insert_char(row, col, c);
+            self.buffer.push(Cell {
+                character: c,
+                fg_color: Color::Default,
+                bg_color: Color::Default,
+                style: Style::default(),
+            });
         }
     }
 

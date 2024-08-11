@@ -1,6 +1,5 @@
-mod text;
-
 use std::sync::Arc;
+use portable_pty::{ CommandBuilder, MasterPty, PtySize };
 use rt::{
     Attrs,
     Buffer,
@@ -18,7 +17,6 @@ use rt::{
     TextRenderer,
     Viewport,
 };
-use text::Text;
 use wgpu::{
     CommandEncoderDescriptor,
     CompositeAlphaMode,
@@ -67,6 +65,8 @@ struct WindowState {
     // it is dropped after the wgpu surface is dropped, otherwise the
     // program may crash when closed. This is probably a bug in wgpu.
     window: Arc<Window>,
+    pty_master: Box<dyn MasterPty + Send>,
+    child: Box<dyn portable_pty::Child + Send>,
 }
 
 impl WindowState {
@@ -121,6 +121,19 @@ impl WindowState {
         );
         text_buffer.shape_until_scroll(&mut font_system, false);
 
+        let pty_system = portable_pty::native_pty_system();
+        let mut pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+
+        let cmd = CommandBuilder::new("bash");
+        let child = pair.slave.spawn_command(cmd).unwrap();
+
         Self {
             device,
             queue,
@@ -133,6 +146,8 @@ impl WindowState {
             text_renderer,
             text_buffer,
             window,
+            pty_master: pair.master,
+            child,
         }
     }
 }
@@ -182,17 +197,17 @@ impl winit::application::ApplicationHandler for Application {
             atlas,
             text_renderer,
             text_buffer,
+            pty_master,
             ..
         } = state;
 
         match event {
-            WindowEvent::Resized(size) => {
-                surface_config.width = size.width;
-                surface_config.height = size.height;
-                surface.configure(&device, &surface_config);
-                window.request_redraw();
-            }
             WindowEvent::RedrawRequested => {
+                let mut pty_reader = pty_master.try_clone_reader().unwrap();
+                let mut pty_output = String::new();
+                pty_reader.read_to_string(&mut pty_output).unwrap();
+                self.text.as_mut().unwrap().push_str(&pty_output);
+
                 text_buffer.set_text(
                     font_system,
                     &self.text.as_ref().unwrap().as_str(),
@@ -265,15 +280,31 @@ impl winit::application::ApplicationHandler for Application {
                 match key.as_ref() {
                     Key::Character(character) => {
                         self.text.as_mut().unwrap().push_str(character);
-                        // self.text
-                        //     .as_mut()
-                        //     .unwrap()
-                        //     .insert_char(0, 0, character.chars().next().unwrap());
+                        // Clone a writer to send input to the PTY
+                        let mut pty_writer = pty_master.take_writer().unwrap();
+                        write!(pty_writer, "{}", character).unwrap();
                         window.request_redraw();
                     }
                     _ => (),
                 }
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => {
+                surface_config.width = size.width;
+                surface_config.height = size.height;
+                surface.configure(&device, &surface_config);
+
+                pty_master
+                    .resize(PtySize {
+                        rows: (size.height / 16) as u16, // Adjust based on your font size
+                        cols: (size.width / 8) as u16,
+                        pixel_width: size.width as u16,
+                        pixel_height: size.height as u16,
+                    })
+                    .unwrap();
+
+                window.request_redraw();
+            }
+
             _ => {}
         }
     }
