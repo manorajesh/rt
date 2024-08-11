@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{ mpsc::channel, Arc };
 use portable_pty::{ CommandBuilder, MasterPty, PtySize };
 use rt::{
     Attrs,
@@ -67,6 +67,8 @@ struct WindowState {
     window: Arc<Window>,
     pty_master: Box<dyn MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send>,
+    output_rx: std::sync::mpsc::Receiver<String>,
+    pty_writer: Box<dyn std::io::Write + Send>,
 }
 
 impl WindowState {
@@ -113,12 +115,6 @@ impl WindowState {
         let physical_height = ((physical_size.height as f64) * scale_factor) as f32;
 
         text_buffer.set_size(&mut font_system, Some(physical_width), Some(physical_height));
-        text_buffer.set_text(
-            &mut font_system,
-            "Hello world! 👋\nThis is rendered with 🦅 glyphon 🦁\nThe text below should be partially clipped.\na b c d e f g h i j k l m n o p q r s t u v w x y z",
-            Attrs::new().family(Family::SansSerif),
-            Shaping::Advanced
-        );
         text_buffer.shape_until_scroll(&mut font_system, false);
 
         let pty_system = portable_pty::native_pty_system();
@@ -131,8 +127,19 @@ impl WindowState {
             })
             .unwrap();
 
-        let cmd = CommandBuilder::new("bash");
-        let child = pair.slave.spawn_command(cmd).unwrap();
+        let cmd = CommandBuilder::new("whoami");
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        // Setting up the channel and spawning a thread to read the output
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        std::thread::spawn(move || {
+            let mut s = String::new();
+            reader.read_to_string(&mut s).unwrap();
+            tx.send(s).unwrap();
+        });
+        let pty_writer = pair.master.take_writer().unwrap();
 
         Self {
             device,
@@ -148,6 +155,8 @@ impl WindowState {
             window,
             pty_master: pair.master,
             child,
+            output_rx: rx,
+            pty_writer,
         }
     }
 }
@@ -167,7 +176,7 @@ impl winit::application::ApplicationHandler for Application {
         let (width, height) = (800, 600);
         let window_attributes = Window::default_attributes()
             .with_inner_size(LogicalSize::new(width as f64, height as f64))
-            .with_title("glyphon hello world");
+            .with_title("rt");
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
         self.window_state = Some(pollster::block_on(WindowState::new(window)));
@@ -198,15 +207,16 @@ impl winit::application::ApplicationHandler for Application {
             text_renderer,
             text_buffer,
             pty_master,
+            output_rx,
+            pty_writer,
             ..
         } = state;
 
         match event {
             WindowEvent::RedrawRequested => {
-                let mut pty_reader = pty_master.try_clone_reader().unwrap();
-                let mut pty_output = String::new();
-                pty_reader.read_to_string(&mut pty_output).unwrap();
-                self.text.as_mut().unwrap().push_str(&pty_output);
+                if let Ok(output) = output_rx.try_recv() {
+                    self.text.as_mut().unwrap().push_str(&output);
+                }
 
                 text_buffer.set_text(
                     font_system,
@@ -279,10 +289,8 @@ impl winit::application::ApplicationHandler for Application {
             } =>
                 match key.as_ref() {
                     Key::Character(character) => {
-                        self.text.as_mut().unwrap().push_str(character);
-                        // Clone a writer to send input to the PTY
-                        let mut pty_writer = pty_master.take_writer().unwrap();
-                        write!(pty_writer, "{}", character).unwrap();
+                        // self.text.as_mut().unwrap().push_str(character);
+                        pty_writer.write_all(character.clone().as_bytes()).unwrap();
                         window.request_redraw();
                     }
                     _ => (),
