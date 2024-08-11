@@ -139,7 +139,7 @@ impl WindowState {
 
 struct Application {
     window_state: Option<WindowState>,
-    text: Option<Text>,
+    text: Option<String>,
 }
 
 impl winit::application::ApplicationHandler for Application {
@@ -157,7 +157,7 @@ impl winit::application::ApplicationHandler for Application {
 
         self.window_state = Some(pollster::block_on(WindowState::new(window)));
 
-        self.text = Some(Text::new(width, height));
+        self.text = Some(String::new());
     }
 
     fn window_event(
@@ -196,7 +196,7 @@ impl winit::application::ApplicationHandler for Application {
                 text_buffer.set_text(
                     font_system,
                     &self.text.as_ref().unwrap().as_str(),
-                    Attrs::new().family(Family::SansSerif),
+                    Attrs::new().family(Family::Monospace),
                     Shaping::Advanced
                 );
                 viewport.update(&queue, Resolution {
@@ -214,15 +214,10 @@ impl winit::application::ApplicationHandler for Application {
                         [
                             TextArea {
                                 buffer: text_buffer,
-                                left: 10.0,
-                                top: 10.0,
+                                left: 0.0,
+                                top: 0.0,
                                 scale: 1.0,
-                                bounds: TextBounds {
-                                    left: 0,
-                                    top: 0,
-                                    right: 600,
-                                    bottom: 160,
-                                },
+                                bounds: TextBounds::default(),
                                 default_color: Color::rgb(255, 255, 255),
                             },
                         ],
