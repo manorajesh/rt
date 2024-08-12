@@ -1,4 +1,4 @@
-use crate::{ Cache, Params, Resolution };
+use crate::renderer::{ Cache, Params, Resolution };
 
 use wgpu::{ BindGroup, Buffer, BufferDescriptor, BufferUsages, Device, Queue };
 

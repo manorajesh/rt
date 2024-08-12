@@ -1,4 +1,4 @@
-use crate::{
+use crate::renderer::{
     text_render::ContentType,
     Cache,
     CacheKey,

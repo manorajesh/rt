@@ -1,6 +1,8 @@
+mod renderer;
+
 use std::sync::{ mpsc::channel, Arc };
 use portable_pty::{ CommandBuilder, MasterPty, PtySize };
-use rt::{
+use renderer::{
     Attrs,
     Buffer,
     Cache,

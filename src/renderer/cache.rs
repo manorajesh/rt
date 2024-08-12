@@ -1,4 +1,4 @@
-use crate::{ GlyphToRender, Params };
+use crate::renderer::{ GlyphToRender, Params };
 
 use wgpu::{
     BindGroup,
