@@ -41,14 +41,19 @@ use winit::{
     dpi::LogicalSize,
     event::{ ElementState, KeyEvent, WindowEvent },
     event_loop::EventLoop,
-    keyboard::Key,
+    keyboard::{ Key, NamedKey },
     window::Window,
 };
+
+use std::thread;
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
     event_loop.run_app(&mut (Application { window_state: None, text: None })).unwrap();
 }
+
+const FONT_SIZE: f32 = 20.0;
+const LINE_HEIGHT: f32 = 42.0;
 
 struct WindowState {
     device: wgpu::Device,
@@ -111,7 +116,7 @@ impl WindowState {
             MultisampleState::default(),
             None
         );
-        let mut text_buffer = Buffer::new(&mut font_system, Metrics::new(30.0, 42.0));
+        let mut text_buffer = Buffer::new(&mut font_system, Metrics::new(FONT_SIZE, LINE_HEIGHT));
 
         let physical_width = ((physical_size.width as f64) * scale_factor) as f32;
         let physical_height = ((physical_size.height as f64) * scale_factor) as f32;
@@ -120,26 +125,33 @@ impl WindowState {
         text_buffer.shape_until_scroll(&mut font_system, false);
 
         let pty_system = portable_pty::native_pty_system();
-        let mut pair = pty_system
+        let pair = pty_system
             .openpty(PtySize {
-                rows: 24,
-                cols: 80,
+                rows: (physical_size.height / (LINE_HEIGHT as u32)) as u16,
+                cols: (physical_size.width / (FONT_SIZE as u32)) as u16,
                 pixel_width: 0,
                 pixel_height: 0,
             })
             .unwrap();
 
-        let cmd = CommandBuilder::new("whoami");
-        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        let cmd = CommandBuilder::new(
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        );
+        let child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
 
         // Setting up the channel and spawning a thread to read the output
         let (tx, rx) = std::sync::mpsc::channel();
         let mut reader = pair.master.try_clone_reader().unwrap();
         std::thread::spawn(move || {
-            let mut s = String::new();
-            reader.read_to_string(&mut s).unwrap();
-            tx.send(s).unwrap();
+            let mut output = [0u8; 1024];
+            loop {
+                let n = reader.read(&mut output).expect("Failed to read from PTY");
+                if n == 0 {
+                    break;
+                }
+                tx.send(String::from_utf8_lossy(&output[..n]).to_string()).unwrap();
+            }
         });
         let pty_writer = pair.master.take_writer().unwrap();
 
@@ -292,9 +304,24 @@ impl winit::application::ApplicationHandler for Application {
                 match key.as_ref() {
                     Key::Character(character) => {
                         // self.text.as_mut().unwrap().push_str(character);
-                        pty_writer.write_all(character.clone().as_bytes()).unwrap();
+                        pty_writer.write_all(character.as_bytes()).unwrap();
+                        pty_writer.flush().unwrap();
                         window.request_redraw();
                     }
+                    Key::Named(name) =>
+                        match name {
+                            NamedKey::Backspace => {
+                                pty_writer.write_all(&[8]).unwrap();
+                                pty_writer.flush().unwrap();
+                                window.request_redraw();
+                            }
+                            NamedKey::Enter => {
+                                pty_writer.write_all(&[13]).unwrap();
+                                pty_writer.flush().unwrap();
+                                window.request_redraw();
+                            }
+                            _ => (),
+                        }
                     _ => (),
                 }
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -305,12 +332,16 @@ impl winit::application::ApplicationHandler for Application {
 
                 pty_master
                     .resize(PtySize {
-                        rows: (size.height / 16) as u16, // Adjust based on your font size
-                        cols: (size.width / 8) as u16,
+                        rows: (size.height / (100 as u32)) as u16,
+                        cols: (size.width / (100 as u32)) as u16,
                         pixel_width: size.width as u16,
                         pixel_height: size.height as u16,
                     })
                     .unwrap();
+
+                window.set_title(
+                    &format!("rt - {}x{}", size.width / (100 as u32), size.height / (100 as u32))
+                );
 
                 window.request_redraw();
             }
