@@ -1,6 +1,7 @@
 mod renderer;
+mod terminal;
 
-use std::sync::{ mpsc::channel, Arc };
+use std::sync::Arc;
 use portable_pty::{ CommandBuilder, MasterPty, PtySize };
 use renderer::{
     Attrs,
@@ -19,6 +20,7 @@ use renderer::{
     TextRenderer,
     Viewport,
 };
+use terminal::Terminal;
 use wgpu::{
     CommandEncoderDescriptor,
     CompositeAlphaMode,
@@ -45,11 +47,9 @@ use winit::{
     window::Window,
 };
 
-use std::thread;
-
 fn main() {
     let event_loop = EventLoop::new().unwrap();
-    event_loop.run_app(&mut (Application { window_state: None, text: None })).unwrap();
+    event_loop.run_app(&mut (Application { window_state: None })).unwrap();
 }
 
 const FONT_SIZE: f32 = 20.0;
@@ -67,6 +67,8 @@ struct WindowState {
     atlas: TextAtlas,
     text_renderer: TextRenderer,
     text_buffer: Buffer,
+
+    terminal: Terminal,
 
     // Make sure that the winit window is last in the struct so that
     // it is dropped after the wgpu surface is dropped, otherwise the
@@ -127,8 +129,8 @@ impl WindowState {
         let pty_system = portable_pty::native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
-                rows: (physical_size.height / (LINE_HEIGHT as u32)) as u16,
-                cols: (physical_size.width / (FONT_SIZE as u32)) as u16,
+                rows: 80,
+                cols: 240,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -155,6 +157,8 @@ impl WindowState {
         });
         let pty_writer = pair.master.take_writer().unwrap();
 
+        let terminal = Terminal::new(1000, 800);
+
         Self {
             device,
             queue,
@@ -171,13 +175,13 @@ impl WindowState {
             child,
             output_rx: rx,
             pty_writer,
+            terminal,
         }
     }
 }
 
 struct Application {
     window_state: Option<WindowState>,
-    text: Option<String>,
 }
 
 impl winit::application::ApplicationHandler for Application {
@@ -187,15 +191,13 @@ impl winit::application::ApplicationHandler for Application {
         }
 
         // Set up window
-        let (width, height) = (800, 600);
+        let (width, height) = (1000, 800);
         let window_attributes = Window::default_attributes()
             .with_inner_size(LogicalSize::new(width as f64, height as f64))
             .with_title("rt");
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
         self.window_state = Some(pollster::block_on(WindowState::new(window)));
-
-        self.text = Some(String::new());
     }
 
     fn window_event(
@@ -223,18 +225,25 @@ impl winit::application::ApplicationHandler for Application {
             pty_master,
             output_rx,
             pty_writer,
+            terminal,
             ..
         } = state;
 
         match event {
             WindowEvent::RedrawRequested => {
-                if let Ok(output) = output_rx.try_recv() {
-                    self.text.as_mut().unwrap().push_str(&output);
+                let mut rendered_output = String::new();
+                while let Ok(output) = output_rx.try_recv() {
+                    rendered_output.push_str(&output);
+                }
+
+                if !rendered_output.is_empty() {
+                    terminal.process_input(rendered_output.as_bytes());
+                    println!("{}", terminal.render_as_str());
                 }
 
                 text_buffer.set_text(
                     font_system,
-                    &self.text.as_ref().unwrap().as_str(),
+                    &terminal.render_as_str(),
                     Attrs::new().family(Family::Monospace),
                     Shaping::Advanced
                 );
@@ -332,8 +341,8 @@ impl winit::application::ApplicationHandler for Application {
 
                 pty_master
                     .resize(PtySize {
-                        rows: (size.height / (100 as u32)) as u16,
-                        cols: (size.width / (100 as u32)) as u16,
+                        rows: 0,
+                        cols: 0,
                         pixel_width: size.width as u16,
                         pixel_height: size.height as u16,
                     })
