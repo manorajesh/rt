@@ -52,7 +52,7 @@ fn main() {
     event_loop.run_app(&mut (Application { window_state: None })).unwrap();
 }
 
-const FONT_SIZE: f32 = 30.0;
+const FONT_SIZE: f32 = 25.0;
 const LINE_HEIGHT: f32 = 42.0;
 
 struct WindowState {
@@ -126,11 +126,15 @@ impl WindowState {
         text_buffer.set_size(&mut font_system, Some(physical_width), Some(physical_height));
         text_buffer.shape_until_scroll(&mut font_system, false);
 
+        let dims = (
+            physical_size.height / (LINE_HEIGHT as u32),
+            physical_size.width / (FONT_SIZE as u32),
+        );
         let pty_system = portable_pty::native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
-                rows: 80,
-                cols: 240,
+                rows: dims.0 as u16,
+                cols: dims.1 as u16,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -157,7 +161,7 @@ impl WindowState {
         });
         let pty_writer = pair.master.take_writer().unwrap();
 
-        let terminal = Terminal::new(1000, 20);
+        let terminal = Terminal::new(dims.1 as usize, dims.0 as usize);
 
         Self {
             device,
@@ -377,15 +381,19 @@ impl winit::application::ApplicationHandler for Application {
 
                 pty_master
                     .resize(PtySize {
-                        rows: 0,
-                        cols: 0,
-                        pixel_width: size.width as u16,
-                        pixel_height: size.height as u16,
+                        rows: (size.height / (LINE_HEIGHT as u32)) as u16,
+                        cols: (size.width / (FONT_SIZE as u32)) as u16,
+                        pixel_width: 0,
+                        pixel_height: 0,
                     })
                     .unwrap();
 
                 window.set_title(
-                    &format!("rt - {}x{}", size.width / (100 as u32), size.height / (100 as u32))
+                    &format!(
+                        "rt - {}x{}",
+                        size.width / (FONT_SIZE as u32),
+                        size.height / (LINE_HEIGHT as u32)
+                    )
                 );
 
                 window.request_redraw();
