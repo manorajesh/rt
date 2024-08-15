@@ -41,7 +41,7 @@ use wgpu::{
 };
 use winit::{
     dpi::LogicalSize,
-    event::{ ElementState, KeyEvent, WindowEvent },
+    event::{ ElementState, KeyEvent, MouseScrollDelta, WindowEvent },
     event_loop::EventLoop,
     keyboard::{ Key, NamedKey },
     window::Window,
@@ -52,7 +52,7 @@ fn main() {
     event_loop.run_app(&mut (Application { window_state: None })).unwrap();
 }
 
-const FONT_SIZE: f32 = 20.0;
+const FONT_SIZE: f32 = 30.0;
 const LINE_HEIGHT: f32 = 42.0;
 
 struct WindowState {
@@ -136,15 +136,14 @@ impl WindowState {
             })
             .unwrap();
 
-        let cmd = CommandBuilder::new(
-            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-        );
+        let cmd = CommandBuilder::new("/bin/bash");
         let child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
 
         // Setting up the channel and spawning a thread to read the output
         let (tx, rx) = std::sync::mpsc::channel();
         let mut reader = pair.master.try_clone_reader().unwrap();
+        let window_clone = window.clone();
         std::thread::spawn(move || {
             let mut output = [0u8; 1024];
             loop {
@@ -153,11 +152,12 @@ impl WindowState {
                     break;
                 }
                 tx.send(String::from_utf8_lossy(&output[..n]).to_string()).unwrap();
+                window_clone.request_redraw();
             }
         });
         let pty_writer = pair.master.take_writer().unwrap();
 
-        let terminal = Terminal::new(1000, 800);
+        let terminal = Terminal::new(1000, 20);
 
         Self {
             device,
@@ -238,7 +238,7 @@ impl winit::application::ApplicationHandler for Application {
 
                 if !rendered_output.is_empty() {
                     terminal.process_input(rendered_output.as_bytes());
-                    println!("{}", terminal.render_as_str());
+                    // println!("{}", terminal.render_as_str());
                 }
 
                 text_buffer.set_text(
@@ -329,10 +329,46 @@ impl winit::application::ApplicationHandler for Application {
                                 pty_writer.flush().unwrap();
                                 window.request_redraw();
                             }
+                            NamedKey::Space => {
+                                pty_writer.write_all(&[32]).unwrap();
+                                pty_writer.flush().unwrap();
+                                window.request_redraw();
+                            }
+                            NamedKey::ArrowUp => {
+                                pty_writer.write_all(&[27, 91, 65]).unwrap();
+                                pty_writer.flush().unwrap();
+                                window.request_redraw();
+                            }
+                            NamedKey::ArrowDown => {
+                                pty_writer.write_all(&[27, 91, 66]).unwrap();
+                                pty_writer.flush().unwrap();
+                                window.request_redraw();
+                            }
+                            NamedKey::ArrowLeft => {
+                                pty_writer.write_all(&[27, 91, 68]).unwrap();
+                                pty_writer.flush().unwrap();
+                                window.request_redraw();
+                            }
+                            NamedKey::ArrowRight => {
+                                pty_writer.write_all(&[27, 91, 67]).unwrap();
+                                pty_writer.flush().unwrap();
+                                window.request_redraw();
+                            }
                             _ => (),
                         }
                     _ => (),
                 }
+            WindowEvent::MouseWheel { delta, .. } => {
+                match delta {
+                    MouseScrollDelta::LineDelta(_, y) => {
+                        terminal.scroll_buffer(y);
+                    }
+                    MouseScrollDelta::PixelDelta(position) => {
+                        terminal.scroll_buffer(position.y as f32);
+                    }
+                }
+                window.request_redraw();
+            }
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 surface_config.width = size.width;

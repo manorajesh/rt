@@ -52,8 +52,6 @@ impl TextBuffer {
             } else {
                 row.push(Cell { char: c, ..Default::default() });
             }
-        } else {
-            // self.rows.push_back(vec![Cell { char: c, ..Default::default() }]);
         }
 
         self.cursor_x += 1;
@@ -85,10 +83,10 @@ impl TextBuffer {
     }
 
     fn scroll_down(&mut self, lines: usize) {
-        if self.viewport_top + self.height + lines < self.rows.len() {
+        if self.viewport_top + lines < self.rows.len() {
             self.viewport_top += lines;
         } else {
-            self.viewport_top = self.rows.len().saturating_sub(self.height);
+            self.viewport_top = self.rows.len().saturating_sub(1);
         }
     }
 
@@ -126,7 +124,26 @@ impl Perform for TextBuffer {
             b'\r' => {
                 self.cursor_x = 0;
             }
-            _ => {}
+            0x07 => {
+                // Bell
+                println!("Bell");
+            }
+            0x08 => {
+                // Backspace
+                if self.cursor_x > 0 {
+                    self.cursor_x -= 1;
+                }
+            }
+            0x09 => {
+                // Tab
+                self.cursor_x += 8 - (self.cursor_x % 8);
+                if self.cursor_x >= self.width {
+                    self.newline();
+                }
+            }
+            _ => {
+                println!("Unhandled control character: {}", byte);
+            }
         }
     }
 
@@ -170,8 +187,82 @@ impl Perform for TextBuffer {
                     .unwrap_or(&1) as usize;
                 self.cursor_x = self.cursor_x.saturating_sub(cols);
             }
-            _ => {}
+            b'K' => {
+                let mode = *params
+                    .iter()
+                    .next()
+                    .map(|p| p.get(0).unwrap_or(&0))
+                    .unwrap_or(&0);
+
+                if let Some(row) = self.rows.get_mut(self.viewport_top + self.cursor_y) {
+                    match mode {
+                        0 => {
+                            // Erase from cursor to end of line
+                            for cell in row.iter_mut().skip(self.cursor_x) {
+                                *cell = Cell::default();
+                            }
+                        }
+                        1 => {
+                            // Erase from start of line to cursor
+                            for cell in row.iter_mut().take(self.cursor_x + 1) {
+                                *cell = Cell::default();
+                            }
+                        }
+                        2 => {
+                            // Erase entire line
+                            for cell in row.iter_mut() {
+                                *cell = Cell::default();
+                            }
+                        }
+                        _ => {
+                            println!("Unhandled CSI K mode: {}", mode);
+                        }
+                    }
+                }
+            }
+            b'H' | b'f' => {
+                let y = *params
+                    .iter()
+                    .next()
+                    .map(|p| p.get(0).unwrap_or(&1))
+                    .unwrap_or(&1) as usize;
+                let x = *params
+                    .iter()
+                    .next()
+                    .map(|p| p.get(0).unwrap_or(&1))
+                    .unwrap_or(&1) as usize;
+                self.move_cursor(x.saturating_sub(1), y.saturating_sub(1));
+            }
+            _ => {
+                println!("Unhandled CSI action: {}", action);
+            }
         }
+    }
+
+    fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {
+        println!("Unhandled escape sequence: {}", _byte);
+    }
+
+    fn osc_dispatch(&mut self, _params: &[&[u8]], _ignore: bool) {
+        println!("Unhandled OSC sequence");
+    }
+
+    fn hook(
+        &mut self,
+        _params: &anstyle_parse::Params,
+        _intermediates: &[u8],
+        _ignore: bool,
+        _action: u8
+    ) {
+        println!("Unhandled DCS hook");
+    }
+
+    fn put(&mut self, _byte: u8) {
+        println!("Unhandled DCS put");
+    }
+
+    fn unhook(&mut self) {
+        println!("Unhandled DCS unhook");
     }
 
     // Implement other methods as needed
@@ -198,5 +289,21 @@ impl Terminal {
 
     pub fn render_as_str(&self) -> String {
         self.buffer.render_viewport()
+    }
+
+    pub fn show_buffer_stats(&self) {
+        println!("Buffer stats:");
+        println!("  Rows: {}", self.buffer.rows.len());
+        println!("  Viewport top: {}", self.buffer.viewport_top);
+        println!("  Cursor: ({}, {})", self.buffer.cursor_x, self.buffer.cursor_y);
+    }
+
+    pub fn scroll_buffer(&mut self, delta: f32) {
+        let delta = delta.clamp(-1.0, 1.0);
+        if delta > 0.0 {
+            self.buffer.scroll_up(delta as usize);
+        } else {
+            self.buffer.scroll_down(-delta as usize);
+        }
     }
 }
