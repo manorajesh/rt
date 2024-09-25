@@ -360,7 +360,7 @@ impl winit::application::ApplicationHandler for Application {
                             }
                             _ => (),
                         }
-                    _ => (),
+                    _ => {}
                 }
             WindowEvent::MouseWheel { delta, .. } => {
                 match delta {
